@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Real-Time ToDo App — Drag & Drop</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial}
+    :root{--bg:#0f1720;--card:#0f1726;--muted:#9aa4b2;--accent:#00bcd4;--accent-2:#00a3cc}
+    body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#071028 0%, #071622 100%);padding:24px;color:#e6eef6}
+    .container{width:100%;max-width:720px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:28px;border-radius:14px;box-shadow:0 8px 30px rgba(2,6,23,0.7);border:1px solid rgba(255,255,255,0.03)}
+    h1{font-size:22px;margin-bottom:12px}
+    .top{display:flex;gap:12px;align-items:center}
+    .input{flex:1;display:flex;gap:10px}
+    input[type=text]{flex:1;padding:12px 14px;border-radius:10px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit;font-size:15px}
+    .btn{background:var(--accent);border:none;padding:10px 14px;border-radius:10px;color:#012;cursor:pointer;font-weight:600}
+    .meta{margin-top:10px;color:var(--muted);font-size:13px}
+
+    /* task list */
+    ul#taskList{list-style:none;margin-top:18px;display:flex;flex-direction:column;gap:10px}
+    li.task{background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid rgba(255,255,255,0.03);cursor:grab}
+    li.task.dragging{opacity:0.6;border-style:dashed;transform:scale(0.995)}
+    .left{display:flex;align-items:center;gap:10px}
+    .handle{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.02)}
+    .text{font-size:15px}
+    .actions{display:flex;gap:8px}
+    .action-btn{padding:8px 10px;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+    .edit{background:#ffd166;color:#1b1b1b}
+    .delete{background:#ff6b6b;color:#fff}
+
+    .placeholder{height:56px;border-radius:10px;border:2px dashed rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+
+    @media (max-width:520px){.container{padding:18px}.top{flex-direction:column;align-items:stretch}.btn{width:100%}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Real-Time ToDo App — Drag & Drop Sorting</h1>
+    <div class="top">
+      <div class="input">
+        <input id="taskInput" type="text" placeholder="Add a new task and press Add or Enter" />
+        <button id="addBtn" class="btn">Add</button>
+      </div>
+    </div>
+    <div class="meta">Tip: Drag the handle (left) to reorder tasks. Order is saved to local storage.</div>
+
+    <ul id="taskList" aria-label="task list"></ul>
+  </div>
+
+  <script>
+    // --- Utilities ---
+    const storageKey = 'todo.tasks.v1';
+    const taskInput = document.getElementById('taskInput');
+    const addBtn = document.getElementById('addBtn');
+    const taskList = document.getElementById('taskList');
+
+    // Load tasks from localStorage or return empty array
+    function getTasks(){
+      try{ return JSON.parse(localStorage.getItem(storageKey)) || []; }
+      catch(e){ console.error('Failed to parse tasks', e); return []; }
+    }
+
+    function saveTasks(tasks){
+      localStorage.setItem(storageKey, JSON.stringify(tasks));
+    }
+
+    // --- Render ---
+    function render(){
+      const tasks = getTasks();
+      taskList.innerHTML = '';
+
+      if(tasks.length === 0){
+        const empty = document.createElement('div');
+        empty.className = 'placeholder';
+        empty.textContent = 'No tasks yet — add one to get started!';
+        taskList.appendChild(empty);
+        return;
+      }
+
+      tasks.forEach((t, idx) => {
+        const li = document.createElement('li');
+        li.className = 'task';
+        li.draggable = true;
+        li.dataset.index = idx;
+
+        li.innerHTML = `
+          <div class="left">
+            <div class="handle" title="Drag to reorder">☰</div>
+            <div class="text" data-text>
+              ${escapeHtml(t.text)}
+            </div>
+          </div>
+          <div class="actions">
+            <button class="action-btn edit">Edit</button>
+            <button class="action-btn delete">Delete</button>
+          </div>
+        `;
+
+        // Attach event listeners
+        li.querySelector('.edit').addEventListener('click', ()=> editTask(idx));
+        li.querySelector('.delete').addEventListener('click', ()=> deleteTask(idx));
+
+        // Drag event handlers
+        li.addEventListener('dragstart', dragStart);
+        li.addEventListener('dragend', dragEnd);
+        li.addEventListener('dragover', dragOver);
+        li.addEventListener('drop', drop);
+
+        taskList.appendChild(li);
+      });
+    }
+
+    // --- CRUD operations ---
+    function addTask(){
+      const text = taskInput.value.trim();
+      if(!text) return alert('Please enter a task');
+      const tasks = getTasks();
+      tasks.push({text});
+      saveTasks(tasks);
+      taskInput.value = '';
+      render();
+    }
+
+    function deleteTask(index){
+      const tasks = getTasks();
+      if(index < 0 || index >= tasks.length) return;
+      tasks.splice(index, 1);
+      saveTasks(tasks);
+      render();
+    }
+
+    function editTask(index){
+      const tasks = getTasks();
+      const current = tasks[index];
+      const updated = prompt('Update task', current.text);
+      if(updated === null) return; // cancelled
+      const val = updated.trim();
+      if(!val) return alert('Task cannot be empty');
+      tasks[index].text = val;
+      saveTasks(tasks);
+      render();
+    }
+
+    // --- Drag & Drop logic ---
+    let dragSrcIndex = null;
+
+    function dragStart(e){
+      const li = e.currentTarget;
+      dragSrcIndex = Number(li.dataset.index);
+      li.classList.add('dragging');
+      // set dataTransfer to allow dragging in Firefox
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', dragSrcIndex); } catch(_){}
+    }
+
+    function dragEnd(e){
+      e.currentTarget.classList.remove('dragging');
+      dragSrcIndex = null;
+      render(); // re-render to ensure correct indices
+    }
+
+    function dragOver(e){
+      e.preventDefault(); // allow drop
+      const li = e.currentTarget;
+      const dragging = document.querySelector('.dragging');
+      if(!dragging || li === dragging) return;
+
+      // visual feedback: insert before/after based on mouse position
+      const rect = li.getBoundingClientRect();
+      const offset = e.clientY - rect.top;
+      const height = rect.height;
+      const after = offset > height/2;
+
+      const parent = li.parentNode;
+      if(after) parent.insertBefore(dragging, li.nextSibling);
+      else parent.insertBefore(dragging, li);
+    }
+
+    function drop(e){
+      e.preventDefault();
+      const li = e.currentTarget;
+      const tasks = getTasks();
+      const targetIndex = Array.from(taskList.children).indexOf(li);
+
+      // If dragging element is the same as drop target, nothing to do
+      const draggingEl = document.querySelector('.dragging');
+      if(!draggingEl) return;
+
+      const currentIndex = Number(draggingEl.dataset.index);
+
+      // Calculate new order array
+      const newOrder = reorderArray(tasks, currentIndex, targetIndex);
+      saveTasks(newOrder);
+      render();
+    }
+
+    // Reorder helper: move element from fromIdx to toIdx
+    function reorderArray(arr, fromIdx, toIdx){
+      const copy = arr.slice();
+      // clamp indices
+      fromIdx = Math.max(0, Math.min(copy.length-1, fromIdx));
+      toIdx = Math.max(0, Math.min(copy.length-1, toIdx));
+      const [item] = copy.splice(fromIdx, 1);
+      copy.splice(toIdx, 0, item);
+      return copy;
+    }
+
+    // --- Helpers ---
+    function escapeHtml(unsafe){
+      return unsafe.replace(/[&<>"'`]/g, function(m){
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;","`":"&#96;"})[m];
+      });
+    }
+
+    // --- Events ---
+    addBtn.addEventListener('click', addTask);
+    taskInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') addTask(); });
+
+    // Initial render
+    render();
+  </script>
+</body>
+</html>
